@@ -487,6 +487,14 @@ func (p *Peer) HandleCreatePacket(ctx context.Context, packet CreatePacket) erro
 
 	p.store.Subscribe(ctx, p.ForwardMessage, p.Game, p.Lobby, p.ID)
 
+	// In star topology, if creator wants to be leader, set them as leader
+	if util.IsStarTopology() && packet.Leader {
+		_, err := p.store.SetLeader(ctx, p.Game, p.Lobby, p.ID)
+		if err != nil {
+			return err
+		}
+	}
+
 	lobby, err := p.store.GetLobby(ctx, p.Game, p.Lobby)
 	if err != nil {
 		return err

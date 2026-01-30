@@ -199,12 +199,20 @@ func (s *PostgresStore) CreateLobby(ctx context.Context, game, lobbyCode, peerID
 		}
 	}
 
+	// Determine initial leader based on topology mode:
+	// - Mesh topology: creator is always the leader
+	// - Star topology: no leader until explicitly set
+	leader := ""
+	if !util.IsStarTopology() {
+		leader = peerID
+	}
+
 	now := util.NowUTC(ctx)
 	res, err := s.DB.Exec(ctx, `
 		INSERT INTO lobbies (code, game, peers, public, custom_data, created_at, updated_at, leader, term, can_update_by, creator, password, max_players)
-		VALUES ($1, $2, $3, $4, $5, $6, $6, $7, 1, $8, $7, $9, $10)
+		VALUES ($1, $2, $3, $4, $5, $6, $6, $7, 1, $8, $9, $10, $11)
 		ON CONFLICT DO NOTHING
-	`, lobbyCode, game, []string{peerID}, options.Public, options.CustomData, now, peerID, options.CanUpdateBy, hashedPassword, options.MaxPlayers)
+	`, lobbyCode, game, []string{peerID}, options.Public, options.CustomData, now, leader, options.CanUpdateBy, peerID, hashedPassword, options.MaxPlayers)
 	if err != nil {
 		return err
 	}
