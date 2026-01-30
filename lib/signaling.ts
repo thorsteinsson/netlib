@@ -31,12 +31,18 @@ export default class Signaling extends EventEmitter<SignalingListeners> {
 
   private readonly latencyVectorPromise: Promise<number[]>
 
+  private readonly storageKey: string
+
   constructor (private readonly network: Network, peers: Map<string, Peer>, url: string, testLatency?: LatencyConfiguration) {
     super()
 
     this.url = url
     this.connections = peers
     this.replayQueue = new Map()
+    this.storageKey = `netlib:${network.gameID}`
+
+    // Restore peer identity from sessionStorage (survives page refresh)
+    this.loadIdentity()
 
     this.latencyVectorPromise = testLatency?.vector !== undefined ? Promise.resolve(testLatency.vector) : getLatencyVector(testLatency?.max ?? 1000, testLatency?.pings ?? 3)
 
@@ -47,6 +53,44 @@ export default class Signaling extends EventEmitter<SignalingListeners> {
     this.pingInterval = setInterval(() => {
       this.ping()
     }, 5000)
+  }
+
+  private loadIdentity (): void {
+    if (typeof sessionStorage === 'undefined') return
+    try {
+      const stored = sessionStorage.getItem(this.storageKey)
+      if (stored != null) {
+        const { id, secret } = JSON.parse(stored)
+        if (id != null && secret != null) {
+          this.receivedID = id
+          this.receivedSecret = secret
+        }
+      }
+    } catch (e) {
+      // Ignore storage errors
+    }
+  }
+
+  private saveIdentity (): void {
+    if (typeof sessionStorage === 'undefined') return
+    if (this.receivedID == null || this.receivedSecret == null) return
+    try {
+      sessionStorage.setItem(this.storageKey, JSON.stringify({
+        id: this.receivedID,
+        secret: this.receivedSecret
+      }))
+    } catch (e) {
+      // Ignore storage errors (e.g., quota exceeded)
+    }
+  }
+
+  private clearIdentity (): void {
+    if (typeof sessionStorage === 'undefined') return
+    try {
+      sessionStorage.removeItem(this.storageKey)
+    } catch (e) {
+      // Ignore storage errors
+    }
   }
 
   private connect (): WebSocket {
@@ -115,7 +159,7 @@ export default class Signaling extends EventEmitter<SignalingListeners> {
       return
     }
 
-    this.close()
+    this.close(false) // Don't clear identity during reconnection
 
     this.requests.forEach((r) => r.reject(new SignalingError('socket-error', 'signaling socket closed')))
     this.requests.clear()
@@ -133,10 +177,13 @@ export default class Signaling extends EventEmitter<SignalingListeners> {
     this.reconnectAttempt += 1
   }
 
-  close (): void {
+  close (clearStoredIdentity: boolean = true): void {
     if (this.pingInterval !== undefined) {
       clearInterval(this.pingInterval)
       this.pingInterval = undefined
+    }
+    if (clearStoredIdentity) {
+      this.clearIdentity()
     }
     this.ws.close()
   }
@@ -220,6 +267,7 @@ export default class Signaling extends EventEmitter<SignalingListeners> {
           }
           this.receivedID = packet.id
           this.receivedSecret = packet.secret
+          this.saveIdentity()
           this.network.emit('ready')
           this.network._prefetchTURNCredentials()
           break
