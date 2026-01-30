@@ -540,28 +540,33 @@ func (p *Peer) HandleJoinPacket(ctx context.Context, packet JoinPacket) error {
 
 	isStarTopology := util.IsStarTopology()
 
-	// Handle leader flag in star topology - force this peer to become the leader
-	if isStarTopology && packet.Leader {
-		result, err := p.store.SetLeader(ctx, p.Game, p.Lobby, p.ID)
-		if err != nil {
-			return err
+	// Handle leader election based on topology mode
+	if isStarTopology {
+		// Star topology: leader is explicitly set, not elected
+		if packet.Leader {
+			// This peer wants to become the leader - force leader takeover
+			result, err := p.store.SetLeader(ctx, p.Game, p.Lobby, p.ID)
+			if err != nil {
+				return err
+			}
+			// Publish the new leader to all peers
+			leaderPacket := LeaderPacket{
+				Type:   "leader",
+				Leader: result.Leader,
+				Term:   result.Term,
+			}
+			data, err := json.Marshal(leaderPacket)
+			if err != nil {
+				return err
+			}
+			err = p.store.Publish(ctx, p.Game+p.Lobby, data)
+			if err != nil {
+				return err
+			}
 		}
-		// Publish the new leader to all peers
-		leaderPacket := LeaderPacket{
-			Type:   "leader",
-			Leader: result.Leader,
-			Term:   result.Term,
-		}
-		data, err := json.Marshal(leaderPacket)
-		if err != nil {
-			return err
-		}
-		err = p.store.Publish(ctx, p.Game+p.Lobby, data)
-		if err != nil {
-			return err
-		}
+		// Non-leader peers in star topology do NOT trigger leader election
 	} else {
-		// Lobby might be empty when joining, then you need to become the leader.
+		// Mesh topology: do leader election (lobby might be empty when joining)
 		_, err = p.doLeaderElectionAndPublish(ctx)
 		if err != nil {
 			return err
