@@ -592,7 +592,8 @@ func (p *Peer) HandleJoinPacket(ctx context.Context, packet JoinPacket) error {
 		// Non-leader peers in star topology do NOT trigger leader election
 	} else {
 		// Mesh topology: do leader election (lobby might be empty when joining)
-		if _, err := p.doLeaderElectionAndPublish(ctx); err != nil {
+		_, err = p.doLeaderElectionAndPublish(ctx)
+		if err != nil {
 			return err
 		}
 	}
