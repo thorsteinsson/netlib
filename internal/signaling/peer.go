@@ -429,8 +429,14 @@ func (p *Peer) HandleCreatePacket(ctx context.Context, packet CreatePacket) erro
 	if p.ID == "" {
 		return fmt.Errorf("peer not connected")
 	}
+
+	// If already in a lobby (e.g., from reconnection), leave it first
 	if p.Lobby != "" {
-		return fmt.Errorf("already in a lobby %s:%s as %s", p.Game, p.Lobby, p.ID)
+		logger.Debug("peer leaving old lobby to create new one", zap.String("peer", p.ID), zap.String("oldLobby", p.Lobby))
+		if err := p.store.LeaveLobby(ctx, p.Game, p.Lobby, p.ID); err != nil {
+			logger.Warn("failed to leave old lobby", zap.Error(err))
+		}
+		p.Lobby = ""
 	}
 
 	if packet.CanUpdateBy == "" {
@@ -508,9 +514,6 @@ func (p *Peer) HandleJoinPacket(ctx context.Context, packet JoinPacket) error {
 	if p.ID == "" {
 		return fmt.Errorf("peer not connected")
 	}
-	if p.Lobby != "" {
-		return fmt.Errorf("already in a lobby %s:%s as %s", p.Game, p.Lobby, p.ID)
-	}
 	if packet.Lobby == "" {
 		return fmt.Errorf("no lobby code supplied")
 	}
@@ -518,21 +521,43 @@ func (p *Peer) HandleJoinPacket(ctx context.Context, packet JoinPacket) error {
 		return fmt.Errorf("lobby code too long")
 	}
 
-	err := p.store.JoinLobby(ctx, p.Game, packet.Lobby, p.ID, packet.Password)
-	if err != nil {
-		switch err {
-		case stores.ErrNotFound:
-			util.ReplyError(ctx, p.conn, util.ErrorWithCode(err, "lobby-not-found"))
-			return nil
-		case stores.ErrInvalidPassword:
-			util.ReplyError(ctx, p.conn, util.ErrorWithCode(err, "invalid-password"))
-			return nil
-		case stores.ErrLobbyIsFull:
-			util.ReplyError(ctx, p.conn, util.ErrorWithCode(err, "lobby-is-full"))
-			return nil
+	// Handle reconnection: if peer is already in a lobby, handle it gracefully
+	if p.Lobby != "" {
+		if p.Lobby == packet.Lobby {
+			// Re-joining the same lobby (e.g., after reconnection) - skip JoinLobby
+			// but still re-establish connections below
+			logger.Debug("peer re-joining same lobby", zap.String("peer", p.ID), zap.String("lobby", p.Lobby))
+		} else {
+			// Joining a different lobby - leave the old one first
+			logger.Debug("peer switching lobbies", zap.String("peer", p.ID), zap.String("oldLobby", p.Lobby), zap.String("newLobby", packet.Lobby))
+			if err := p.store.LeaveLobby(ctx, p.Game, p.Lobby, p.ID); err != nil {
+				logger.Warn("failed to leave old lobby", zap.Error(err))
+			}
+			p.Lobby = ""
 		}
+	}
 
-		return err
+	// Only call JoinLobby if we're not already in this lobby
+	if p.Lobby != packet.Lobby {
+		err := p.store.JoinLobby(ctx, p.Game, packet.Lobby, p.ID, packet.Password)
+		if err != nil {
+			switch err {
+			case stores.ErrNotFound:
+				util.ReplyError(ctx, p.conn, util.ErrorWithCode(err, "lobby-not-found"))
+				return nil
+			case stores.ErrInvalidPassword:
+				util.ReplyError(ctx, p.conn, util.ErrorWithCode(err, "invalid-password"))
+				return nil
+			case stores.ErrLobbyIsFull:
+				util.ReplyError(ctx, p.conn, util.ErrorWithCode(err, "lobby-is-full"))
+				return nil
+			case stores.ErrAlreadyInLobby:
+				// Peer is already in this lobby (from a previous session) - this is fine
+				logger.Debug("peer already in lobby from previous session", zap.String("peer", p.ID), zap.String("lobby", packet.Lobby))
+			default:
+				return err
+			}
+		}
 	}
 
 	p.Lobby = packet.Lobby
