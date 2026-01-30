@@ -832,6 +832,108 @@ func (s *PostgresStore) SetLeader(ctx context.Context, gameID, lobbyCode, peerID
 	}, nil
 }
 
+// ClearLeaderIfGone checks if the current leader is no longer in the lobby (or is timed out)
+// and clears the leader without electing a new one. Used in star topology.
+func (s *PostgresStore) ClearLeaderIfGone(ctx context.Context, gameID, lobbyCode string) (*ElectionResult, error) {
+	tx, err := s.DB.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(context.Background()) //nolint:errcheck
+
+	// Lock the peers table to get consistent timed out peer data
+	_, err = tx.Exec(ctx, `
+		LOCK TABLE peers IN EXCLUSIVE MODE
+	`)
+	if err != nil {
+		return nil, err
+	}
+
+	var timedOutPeers []string
+	rows, err := tx.Query(ctx, `
+		SELECT peer
+		FROM peers
+		WHERE disconnected = TRUE
+	`)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+	} else {
+		defer rows.Close() //nolint:errcheck
+
+		for rows.Next() {
+			var peer string
+			err = rows.Scan(&peer)
+			if err != nil {
+				return nil, err
+			}
+			timedOutPeers = append(timedOutPeers, peer)
+		}
+
+		if err = rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+
+	var currentLeader string
+	var currentTerm int
+	var peers []string
+	err = tx.QueryRow(ctx, `
+		SELECT leader, term, peers
+		FROM lobbies
+		WHERE game = $1
+		AND code = $2
+		FOR UPDATE
+	`, gameID, lobbyCode).Scan(&currentLeader, &currentTerm, &peers)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	// If there's no leader, nothing to clear
+	if currentLeader == "" {
+		return nil, nil
+	}
+
+	// Check if leader is still valid (in peers list and not timed out)
+	leaderGone := !slices.Contains(peers, currentLeader) || slices.Contains(timedOutPeers, currentLeader)
+
+	if !leaderGone {
+		// Leader is still valid, no change needed
+		return nil, nil
+	}
+
+	// Leader is gone - clear without electing a new one
+	newTerm := currentTerm + 1
+	now := util.NowUTC(ctx)
+
+	_, err = tx.Exec(ctx, `
+		UPDATE lobbies
+		SET
+			leader = '',
+			term = $1,
+			updated_at = $2
+		WHERE game = $3
+		AND code = $4
+	`, newTerm, now, gameID, lobbyCode)
+	if err != nil {
+		return nil, err
+	}
+
+	err = tx.Commit(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ElectionResult{
+		Leader: "",
+		Term:   newTerm,
+	}, nil
+}
+
 func (s *PostgresStore) UpdateLobby(ctx context.Context, game, lobbyCode, peerID string, options LobbyOptions) error {
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {

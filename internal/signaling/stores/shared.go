@@ -53,6 +53,12 @@ type Store interface {
 	// Used in star topology when a new peer joins with leader flag set.
 	SetLeader(ctx context.Context, gameID, lobbyCode, peerID string) (*ElectionResult, error)
 
+	// ClearLeaderIfGone checks if the current leader is no longer in the lobby (or is timed out)
+	// and clears the leader without electing a new one. Used in star topology where leaders
+	// are only assigned explicitly via SetLeader.
+	// Returns nil if the leader is still valid, or an ElectionResult with empty Leader if cleared.
+	ClearLeaderIfGone(ctx context.Context, gameID, lobbyCode string) (*ElectionResult, error)
+
 	UpdateLobby(ctx context.Context, Game, LobbyCode, PeerID string, options LobbyOptions) error
 }
 

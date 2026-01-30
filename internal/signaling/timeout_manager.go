@@ -9,6 +9,7 @@ import (
 	"github.com/koenbollen/logging"
 	"github.com/poki/netlib/internal/metrics"
 	"github.com/poki/netlib/internal/signaling/stores"
+	"github.com/poki/netlib/internal/util"
 	"go.uber.org/zap"
 )
 
@@ -130,7 +131,16 @@ func (manager *TimeoutManager) MarkPeerAsActive(ctx context.Context, peerID stri
 }
 
 func (manager *TimeoutManager) doLeaderElectionAndPublish(ctx context.Context, gameID, lobbyCode string) error {
-	result, err := manager.Store.DoLeaderElection(ctx, gameID, lobbyCode)
+	var result *stores.ElectionResult
+	var err error
+
+	if util.IsStarTopology() {
+		// Star topology: only clear leader if gone, never elect a new one
+		result, err = manager.Store.ClearLeaderIfGone(ctx, gameID, lobbyCode)
+	} else {
+		// Mesh topology: do normal leader election
+		result, err = manager.Store.DoLeaderElection(ctx, gameID, lobbyCode)
+	}
 	if err != nil {
 		return err
 	}

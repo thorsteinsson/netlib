@@ -696,9 +696,19 @@ func (p *Peer) HandleUpdatePacket(ctx context.Context, packet LobbyUpdatePacket)
 }
 
 // doLeaderElectionAndPublish will do a leader election and publish the result if a new leader was elected.
-// It returns true if a new leader was elected, false if not.
+// In star topology, it only clears the leader if they're gone (no automatic election).
+// It returns true if leadership changed, false if not.
 func (p *Peer) doLeaderElectionAndPublish(ctx context.Context) (bool, error) {
-	result, err := p.store.DoLeaderElection(ctx, p.Game, p.Lobby)
+	var result *stores.ElectionResult
+	var err error
+
+	if util.IsStarTopology() {
+		// Star topology: only clear leader if gone, never elect a new one
+		result, err = p.store.ClearLeaderIfGone(ctx, p.Game, p.Lobby)
+	} else {
+		// Mesh topology: do normal leader election
+		result, err = p.store.DoLeaderElection(ctx, p.Game, p.Lobby)
+	}
 	if err != nil {
 		return false, err
 	}
