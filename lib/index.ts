@@ -29,4 +29,4 @@ export const DefaultDataChannels: { [label: string]: RTCDataChannelInit } = {
   }
 }
 
-export { default as Network } from './network'
+export { default as Network, type NetworkOptions } from './network'

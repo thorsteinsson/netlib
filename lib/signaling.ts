@@ -14,6 +14,7 @@ export default class Signaling extends EventEmitter<SignalingListeners> {
   private ws: WebSocket
   private reconnectAttempt: number = 0
   private reconnecting: boolean = false
+  private ready: boolean = false
   receivedID?: string
   receivedSecret?: string
   currentLobby?: string
@@ -210,7 +211,7 @@ export default class Signaling extends EventEmitter<SignalingListeners> {
           break
 
         case 'welcome':
-          if (this.receivedID !== undefined) {
+          if (this.ready) {
             this.network.log('signaling reconnected')
             this.network.emit('signalingreconnected')
             return
@@ -218,6 +219,7 @@ export default class Signaling extends EventEmitter<SignalingListeners> {
           if (packet.id === '') {
             throw new Error('missing id on received welcome packet')
           }
+          this.ready = true
           this.receivedID = packet.id
           this.receivedSecret = packet.secret
           this.network.emit('ready')

@@ -25,6 +25,11 @@ interface NetworkListeners {
   signalingerror: (e: SignalingError) => void | Promise<void>
 }
 
+export interface NetworkOptions {
+  /** Pre-set credentials to reconnect as the same peer after a page refresh. */
+  credentials?: { id: string, secret: string }
+}
+
 export default class Network extends EventEmitter<NetworkListeners> {
   private _closing: boolean = false
   public readonly peers: Map<string, Peer>
@@ -36,11 +41,16 @@ export default class Network extends EventEmitter<NetworkListeners> {
 
   private readonly unloadListener: () => void
 
-  constructor (public readonly gameID: string, private readonly peerConfig: PeerConfiguration = DefaultRTCConfiguration, signalingURL: string = DefaultSignalingURL) {
+  constructor (public readonly gameID: string, private readonly peerConfig: PeerConfiguration = DefaultRTCConfiguration, signalingURL: string = DefaultSignalingURL, options?: NetworkOptions) {
     super()
     this.peers = new Map<string, Peer>()
     this.signaling = new Signaling(this, this.peers, signalingURL, peerConfig.testLatency)
     this.credentials = new Credentials(this.signaling)
+
+    if (options?.credentials != null) {
+      this.signaling.receivedID = options.credentials.id
+      this.signaling.receivedSecret = options.credentials.secret
+    }
 
     this.unloadListener = () => this.close()
     if (typeof window !== 'undefined') {
@@ -201,6 +211,10 @@ export default class Network extends EventEmitter<NetworkListeners> {
 
   get id (): string {
     return this.signaling.receivedID ?? ''
+  }
+
+  get secret (): string {
+    return this.signaling.receivedSecret ?? ''
   }
 
   get closing (): boolean {
